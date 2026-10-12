@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ meta.title or "Draft" }}{% endblock %}
+{% block head %}
+{% if meta.status == "drafting" %}<meta http-equiv="refresh" content="3">{% endif %}
+{% endblock %}
+{% block content %}
+<style>
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+  .preview { overflow-wrap: anywhere; }
+  .preview img { max-width: 100%; height: auto; border-radius: 6px; }
+  .preview h1 { font-size: 26px; }
+  .preview pre { overflow-x: auto; }
+  .thumbs { display: flex; gap: 8px; flex-wrap: wrap; }
+  .thumbs img { height: 64px; border-radius: 6px; border: 1px solid var(--border); }
+</style>
+
+<p><a href="/">← All posts</a></p>
+<h1>{{ meta.title or "New draft" }} <span class="badge s-{{ meta.status }}">{{ meta.status.replace('_', ' ') }}</span></h1>
+
+{% if meta.error %}<div class="notice error">{{ meta.error }}</div>{% endif %}
+
+{% if meta.status == "drafting" %}
+  <div class="panel"><p>Claude is writing… this page refreshes on its own. It usually takes under a minute.</p></div>
+
+{% elif meta.status == "failed" %}
+  <form method="post" action="/posts/{{ meta.id }}/retry"><button class="primary">Try again</button></form>
+
+{% else %}
+  {% if meta.status == "pr_open" %}
+  <div class="notice" style="border-left-color: var(--ok)">Pull request opened: <a href="{{ meta.pr_url }}" target="_blank" rel="noopener">{{ meta.pr_url }}</a>. Merge it on GitHub to publish.</div>
+  {% endif %}
+  {% if meta.notes %}<div class="notice"><strong>Notes from Claude:</strong> {{ meta.notes }}</div>{% endif %}
+
+  <div class="split">
+    <form class="panel" method="post" id="review">
+      <h2>Edit <span class="muted" style="font-weight:400">· version {{ revisions }}</span></h2>
+      <textarea class="mono" name="markdown" rows="26" {% if meta.status != "in_review" %}readonly{% endif %}>{{ markdown }}</textarea>
+      {% if images %}
+      <label>Images in this post</label>
+      <div class="thumbs">{% for name in images %}<img src="/posts/{{ meta.id }}/images/{{ name }}" alt="" title="{{ name }}">{% endfor %}</div>
+      {% endif %}
+
+      {% if meta.status == "in_review" %}
+      <label for="feedback">Feedback for a revision</label>
+      <textarea id="feedback" name="feedback" rows="4" placeholder="e.g. Shorter intro, less formal, end with a question."></textarea>
+      <div class="row">
+        <button class="primary" formaction="/posts/{{ meta.id }}/approve"
+                onclick="return confirm('Open a pull request with this post?')">Approve &amp; open PR</button>
+        <button formaction="/posts/{{ meta.id }}/revise">Revise with feedback</button>
+        <button formaction="/posts/{{ meta.id }}/save">Save edits</button>
+      </div>
+      <p class="muted" style="font-size:13px">Your direct edits are kept: Claude is told about them when you ask for a revision.</p>
+      {% endif %}
+    </form>
+
+    <article class="panel preview">{{ preview | safe }}</article>
+  </div>
+{% endif %}
+{% endblock %}

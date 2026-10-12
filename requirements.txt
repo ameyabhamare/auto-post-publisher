@@ -1,0 +1,9 @@
+anthropic
+fastapi
+uvicorn
+jinja2
+python-multipart
+pillow
+PyGithub
+markdown
+python-dotenv

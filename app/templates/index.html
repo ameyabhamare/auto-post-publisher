@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .grid { display: grid; grid-template-columns: 3fr 2fr; gap: 20px; align-items: start; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  .post-list { list-style: none; margin: 0; padding: 0; }
+  .post-list li { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .post-list li:last-child { border-bottom: 0; }
+</style>
+
+{% if skill_missing %}
+<div class="notice error">No <code>skill.md</code> found in the project root. Drafting will fail until you add one (see <code>skill.example.md</code>).</div>
+{% endif %}
+{% if not repo %}
+<div class="notice">GITHUB_REPO is not set in <code>.env</code>. You can draft and review, but approving won't open a PR yet.</div>
+{% endif %}
+
+<div class="grid">
+  <form class="panel" method="post" action="/posts" enctype="multipart/form-data"
+        onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Uploading…';">
+    <h1>New post</h1>
+    <label for="content">Content</label>
+    <textarea id="content" name="content" rows="14" required
+      placeholder="Notes, a rough draft, bullet points: whatever you have."></textarea>
+    <label for="images">Images <span class="muted">(optional; JPG, PNG, WebP, GIF)</span></label>
+    <input id="images" type="file" name="images" accept="image/jpeg,image/png,image/webp,image/gif" multiple>
+    <div class="row"><button class="primary" type="submit">Draft post</button></div>
+  </form>
+
+  <section class="panel">
+    <h2>Posts</h2>
+    {% if posts %}
+    <ul class="post-list">
+      {% for p in posts %}
+      <li>
+        <a href="/posts/{{ p.id }}">{{ p.title or "Untitled draft" }}</a>
+        <span class="badge s-{{ p.status }}">{{ p.status.replace('_', ' ') }}</span>
+        <div class="muted" style="font-size:13px">{{ p.created[:10] }}</div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">Nothing yet.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

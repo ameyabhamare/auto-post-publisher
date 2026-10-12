@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Post Publisher{% endblock %}</title>
+  {% block head %}{% endblock %}
+  <style>
+    :root {
+      --bg: #f7f7f5; --panel: #ffffff; --text: #1f1f1d; --muted: #6b6b66;
+      --border: #e2e1dc; --accent: #2f5bd3; --accent-text: #ffffff;
+      --ok: #1f7a4d; --warn: #a15c00; --err: #b3261e;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #161615; --panel: #1f1f1d; --text: #ecebe6; --muted: #9a9a93;
+        --border: #34342f; --accent: #7c9bff; --accent-text: #10131c;
+        --ok: #5cc28f; --warn: #e0a24a; --err: #f08a80;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    header { padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--panel); }
+    header a { color: var(--text); text-decoration: none; font-weight: 600; }
+    main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; }
+    h1 { font-size: 22px; margin: 0 0 16px; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+    label { display: block; font-weight: 600; margin: 12px 0 6px; }
+    textarea, input[type=file] { width: 100%; font: inherit; color: var(--text); background: var(--bg);
+           border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+    textarea.mono { font: 13px/1.5 ui-monospace, Consolas, monospace; }
+    button { font: inherit; font-weight: 600; border-radius: 8px; padding: 9px 16px; cursor: pointer;
+             border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+    button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .muted { color: var(--muted); }
+    .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px;
+             border-radius: 999px; border: 1px solid currentColor; }
+    .s-drafting { color: var(--warn); } .s-in_review { color: var(--accent); }
+    .s-pr_open { color: var(--ok); } .s-failed { color: var(--err); }
+    .notice { border-left: 3px solid var(--warn); padding: 8px 12px; background: var(--panel); margin-bottom: 16px; }
+    .error { border-left-color: var(--err); }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header><a href="/">Post Publisher</a></header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>
