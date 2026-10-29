@@ -1,11 +1,11 @@
 """Everything that teaches Claude the author's voice, beyond the hand-written skill.md.
 
-    example_posts()        hand-picked examples/ plus recent posts published to GITHUB_REPO
+    example_posts()        hand-picked examples/ plus recent posts from the user's posts repo
     generate_proposal()    drafts a whole skill.md from past posts, for the author to review
     learn_from_post()      after approval, compares Claude's first draft with what the author
                            shipped and proposes new skill.md rules
 
-Stored under data/style/:
+Each user's data lives under users/<name>/data/style/:
 
     published/manifest.json   last check time, last posts commit, cached folder names
     published/<folder>.md     cached published posts, frontmatter stripped
@@ -25,23 +25,11 @@ from pathlib import Path
 from github import GithubException
 
 from . import llm, publisher, store
-from .config import (
-    EXAMPLE_COUNT,
-    EXAMPLES_DIR,
-    GITHUB_BASE_BRANCH,
-    POSTS_DIR_IN_REPO,
-    ROOT,
-    SKILL_PATH,
-    STYLE_DIR,
-    STYLE_SOURCE_COUNT,
-)
+from .config import EXAMPLE_COUNT, ROOT, STYLE_SOURCE_COUNT
+from .users import User
 
 log = logging.getLogger(__name__)
 
-PUBLISHED_DIR = STYLE_DIR / "published"
-MANIFEST = PUBLISHED_DIR / "manifest.json"
-PROPOSAL = STYLE_DIR / "proposal.json"
-SUGGESTIONS = STYLE_DIR / "suggestions.json"
 
 # Ask GitHub for new posts at most this often; drafts in between reuse the cache, which also
 # keeps the system prompt byte-identical so prompt caching keeps working.
@@ -49,7 +37,28 @@ CHECK_INTERVAL = 600
 POST_FOLDER = re.compile(r"\d{4}-\d{2}-\d{2}-.+")
 FRONTMATTER = re.compile(r"\A---\n.*?\n---\n+", re.S)
 
-_lock = threading.Lock()  # guards read-modify-write of the JSON files and skill.md
+_locks: dict[str, threading.Lock] = {}
+
+
+def _lock(user: User) -> threading.Lock:
+    """Guards read-modify-write of one user's JSON files and skill.md."""
+    return _locks.setdefault(user.name, threading.Lock())
+
+
+def _published_dir(user: User) -> Path:
+    return user.style_dir / "published"
+
+
+def _manifest(user: User) -> Path:
+    return _published_dir(user) / "manifest.json"
+
+
+def _proposal(user: User) -> Path:
+    return user.style_dir / "proposal.json"
+
+
+def _suggestions(user: User) -> Path:
+    return user.style_dir / "suggestions.json"
 
 
 def _now() -> str:
@@ -81,33 +90,41 @@ def strip_frontmatter(text: str) -> str:
 # ---------------------------------------------------------------- published posts
 
 
-def _sync_published(force: bool = False) -> None:
+def _sync_published(user: User, force: bool = False) -> None:
     """Refresh the local cache of published posts if the posts folder changed on GitHub."""
-    manifest = _read_json(MANIFEST, {})
+    published = _published_dir(user)
+    manifest = _read_json(_manifest(user), {})
+    source = f"{user.repo}@{user.base_branch}:{user.repo_posts_dir}"
+    if manifest.get("source") != source:
+        # Repo or folder changed on the Account page: start over.
+        for stale in published.glob("*.md"):
+            stale.unlink()
+        manifest, force = {"source": source}, True
     if not force and time.time() - manifest.get("checked", 0) < CHECK_INTERVAL:
         return
+    posts_dir = user.repo_posts_dir
     try:
-        repo = publisher.get_repo()
-        latest = next(iter(repo.get_commits(sha=GITHUB_BASE_BRANCH, path=POSTS_DIR_IN_REPO)), None)
+        repo = publisher.get_repo(user)
+        latest = next(iter(repo.get_commits(sha=user.base_branch, path=posts_dir)), None)
         head = latest.sha if latest else None
         if head and (force or head != manifest.get("head")):
-            entries = repo.get_contents(POSTS_DIR_IN_REPO, ref=head)
+            entries = repo.get_contents(posts_dir, ref=head)
             folders = sorted(
                 (e.name for e in entries if e.type == "dir" and POST_FOLDER.fullmatch(e.name)), reverse=True
             )[: max(EXAMPLE_COUNT, STYLE_SOURCE_COUNT)]
             kept = []
             for folder in folders:
-                cached = PUBLISHED_DIR / f"{folder}.md"
+                cached = published / f"{folder}.md"
                 if not cached.exists():
                     try:
-                        raw = repo.get_contents(f"{POSTS_DIR_IN_REPO}/{folder}/post.md", ref=head)
+                        raw = repo.get_contents(f"{posts_dir}/{folder}/post.md", ref=head)
                     except GithubException as e:
                         if e.status == 404:
                             continue
                         raise
                     _write(cached, strip_frontmatter(raw.decoded_content.decode("utf-8")))
                 kept.append(folder)
-            for stale in PUBLISHED_DIR.glob("*.md"):
+            for stale in published.glob("*.md"):
                 if stale.stem not in kept:
                     stale.unlink()
             manifest["posts"] = kept
@@ -120,24 +137,24 @@ def _sync_published(force: bool = False) -> None:
         manifest["error"] = str(e)
         log.warning("Could not refresh published posts: %s", e)
     manifest["checked"] = time.time()
-    _write_json(MANIFEST, manifest)
+    _write_json(_manifest(user), manifest)
 
 
-def published_posts(limit: int, force: bool = False) -> list[tuple[str, str]]:
+def published_posts(user: User, limit: int, force: bool = False) -> list[tuple[str, str]]:
     """Most recent published posts as (name, markdown without frontmatter), newest first."""
-    with _lock:
-        _sync_published(force)
-        folders = _read_json(MANIFEST, {}).get("posts", [])
+    with _lock(user):
+        _sync_published(user, force)
+        folders = _read_json(_manifest(user), {}).get("posts", [])
     out = []
     for folder in folders[:limit]:
-        path = PUBLISHED_DIR / f"{folder}.md"
+        path = _published_dir(user) / f"{folder}.md"
         if path.exists():
             out.append((f"{folder}.md", path.read_text(encoding="utf-8")))
     return out
 
 
-def published_status() -> dict:
-    manifest = _read_json(MANIFEST, {})
+def published_status(user: User) -> dict:
+    manifest = _read_json(_manifest(user), {})
     checked = manifest.get("checked")
     return {
         "count": len(manifest.get("posts", [])),
@@ -146,44 +163,44 @@ def published_status() -> dict:
     }
 
 
-def local_examples() -> list[tuple[str, str]]:
-    files = sorted(EXAMPLES_DIR.glob("*.md")) if EXAMPLES_DIR.exists() else []
+def local_examples(user: User) -> list[tuple[str, str]]:
+    files = sorted(user.examples_dir.glob("*.md")) if user.examples_dir.exists() else []
     return [(p.name, p.read_text(encoding="utf-8")) for p in files]
 
 
-def example_posts() -> list[tuple[str, str]]:
+def example_posts(user: User) -> list[tuple[str, str]]:
     """Examples sent with every draft: all hand-picked ones, then recent published posts
     until EXAMPLE_COUNT is reached."""
-    examples = local_examples()
+    examples = local_examples(user)
     room = EXAMPLE_COUNT - len(examples)
     if room > 0:
-        examples += published_posts(room)
+        examples += published_posts(user, room)
     return examples
 
 
 # ---------------------------------------------------------------- skill.md
 
 
-def read_skill() -> str:
-    return SKILL_PATH.read_text(encoding="utf-8") if SKILL_PATH.exists() else ""
+def read_skill(user: User) -> str:
+    return user.skill_path.read_text(encoding="utf-8") if user.skill_path.exists() else ""
 
 
-def save_skill(text: str) -> None:
+def save_skill(user: User, text: str) -> None:
     """Overwrite skill.md, keeping the previous version as skill.md.bak."""
     text = text.replace("\r\n", "\n").strip() + "\n"
-    with _lock:
-        if SKILL_PATH.exists():
-            SKILL_PATH.with_name(SKILL_PATH.name + ".bak").write_text(read_skill(), encoding="utf-8")
-        _write(SKILL_PATH, text)
+    with _lock(user):
+        if user.skill_path.exists():
+            user.skill_path.with_name(user.skill_path.name + ".bak").write_text(read_skill(user), encoding="utf-8")
+        _write(user.skill_path, text)
 
 
-def add_rule(section: str, rule: str) -> None:
+def add_rule(user: User, section: str, rule: str) -> None:
     """Add a bullet to the `## section` of skill.md, creating the section if needed."""
     rule = rule.strip().removeprefix("- ").strip()
     if not rule:
         return
-    with _lock:
-        text = read_skill() or "# Writing style\n"
+    with _lock(user):
+        text = read_skill(user) or "# Writing style\n"
         lines = text.rstrip("\n").split("\n")
         start = next(
             (i for i, line in enumerate(lines) if re.fullmatch(rf"##\s+{re.escape(section.strip())}\s*", line, re.I)),
@@ -196,7 +213,7 @@ def add_rule(section: str, rule: str) -> None:
             while end > start + 1 and not lines[end - 1].strip():
                 end -= 1
             lines.insert(end, f"- {rule}")
-        _write(SKILL_PATH, "\n".join(lines) + "\n")
+        _write(user.skill_path, "\n".join(lines) + "\n")
 
 
 # ---------------------------------------------------------------- generating skill.md
@@ -232,22 +249,22 @@ GENERATE_SCHEMA = {
 }
 
 
-def proposal() -> dict:
-    return _read_json(PROPOSAL, {})
+def proposal(user: User) -> dict:
+    return _read_json(_proposal(user), {})
 
 
-def start_proposal() -> None:
-    _write_json(PROPOSAL, {"status": "generating", "started": _now()})
+def start_proposal(user: User) -> None:
+    _write_json(_proposal(user), {"status": "generating", "started": _now()})
 
 
-def discard_proposal() -> None:
-    PROPOSAL.unlink(missing_ok=True)
+def discard_proposal(user: User) -> None:
+    _proposal(user).unlink(missing_ok=True)
 
 
-def generate_proposal(pasted: str) -> None:
+def generate_proposal(user: User, pasted: str) -> None:
     """Background job: write a proposed skill.md from past posts into proposal.json."""
     try:
-        sources = local_examples() + published_posts(STYLE_SOURCE_COUNT)
+        sources = local_examples(user) + published_posts(user, STYLE_SOURCE_COUNT)
         if pasted.strip():
             sources.append(("pasted.md", pasted.strip()))
         if not sources:
@@ -257,7 +274,7 @@ def generate_proposal(pasted: str) -> None:
 
         template = (ROOT / "skill.example.md").read_text(encoding="utf-8")
         posts = "\n\n".join(f'<post name="{name}">\n{text}\n</post>' for name, text in sources)
-        current = read_skill()
+        current = read_skill(user)
         parts = [f"<posts>\n{posts}\n</posts>"]
         if current:
             parts.append(f"<current_style_file>\n{current}\n</current_style_file>")
@@ -269,7 +286,7 @@ def generate_proposal(pasted: str) -> None:
             [{"role": "user", "content": "\n\n".join(parts)}],
             GENERATE_SCHEMA,
         )
-        _write_json(PROPOSAL, {
+        _write_json(_proposal(user), {
             "status": "ready",
             "created": _now(),
             "skill_markdown": result["skill_markdown"],
@@ -277,7 +294,7 @@ def generate_proposal(pasted: str) -> None:
             "sources": [name for name, _ in sources],
         })
     except Exception as e:  # surface every failure on the style page
-        _write_json(PROPOSAL, {"status": "failed", "error": str(e)})
+        _write_json(_proposal(user), {"status": "failed", "error": str(e)})
 
 
 # ---------------------------------------------------------------- learning from edits
@@ -321,8 +338,8 @@ LEARN_SCHEMA = {
 }
 
 
-def suggestions() -> dict:
-    return _read_json(SUGGESTIONS, {"items": [], "error": None})
+def suggestions(user: User) -> dict:
+    return _read_json(_suggestions(user), {"items": [], "error": None})
 
 
 def _first_draft(messages: list[dict]) -> str | None:
@@ -346,19 +363,19 @@ def _final_body(markdown: str) -> str:
     return re.sub(r"\A#\s.*\n+", "", strip_frontmatter(markdown), count=1).strip()
 
 
-def learn_from_post(post_id: str) -> None:
+def learn_from_post(user: User, post_id: str) -> None:
     """Background job after approval: turn the author's edits and feedback into rule suggestions."""
     try:
-        messages = store.load_messages(post_id)
+        messages = store.load_messages(user, post_id)
         draft = _first_draft(messages)
         feedback = _feedback(messages)
-        final = _final_body(store.load_markdown(post_id))
+        final = _final_body(store.load_markdown(user, post_id))
         if draft is None or (not feedback and draft == final):
             return  # shipped as drafted: nothing to learn
 
-        pending = suggestions()["items"]
+        pending = suggestions(user)["items"]
         parts = [
-            f"<style_file>\n{read_skill() or '(none yet)'}\n</style_file>",
+            f"<style_file>\n{read_skill(user) or '(none yet)'}\n</style_file>",
             f"<first_draft>\n{draft}\n</first_draft>",
         ]
         if feedback:
@@ -373,36 +390,36 @@ def learn_from_post(post_id: str) -> None:
             [{"role": "user", "content": "\n\n".join(parts)}],
             LEARN_SCHEMA,
         )
-        meta = store.load_meta(post_id)
+        meta = store.load_meta(user, post_id)
         new = [
             {**s, "id": uuid.uuid4().hex[:12], "post_id": post_id, "post_title": meta.get("title", ""), "created": _now()}
             for s in result["suggestions"] if s["rule"].strip()
         ]
-        with _lock:
-            state = suggestions()
+        with _lock(user):
+            state = suggestions(user)
             state["items"] += new
             state["error"] = None
-            _write_json(SUGGESTIONS, state)
+            _write_json(_suggestions(user), state)
     except Exception as e:  # never break publishing; show the failure on the style page
         log.warning("Learning from post %s failed: %s", post_id, e)
-        with _lock:
-            state = suggestions()
+        with _lock(user):
+            state = suggestions(user)
             state["error"] = f"Could not learn from post {post_id}: {e}"
-            _write_json(SUGGESTIONS, state)
+            _write_json(_suggestions(user), state)
 
 
-def resolve_suggestion(suggestion_id: str, accept: bool, rule: str | None = None) -> None:
-    with _lock:
-        state = suggestions()
+def resolve_suggestion(user: User, suggestion_id: str, accept: bool, rule: str | None = None) -> None:
+    with _lock(user):
+        state = suggestions(user)
         item = next((s for s in state["items"] if s["id"] == suggestion_id), None)
         state["items"] = [s for s in state["items"] if s["id"] != suggestion_id]
-        _write_json(SUGGESTIONS, state)
+        _write_json(_suggestions(user), state)
     if item and accept:
-        add_rule(item["section"], rule if rule is not None else item["rule"])
+        add_rule(user, item["section"], rule if rule is not None else item["rule"])
 
 
-def dismiss_error() -> None:
-    with _lock:
-        state = suggestions()
+def dismiss_error(user: User) -> None:
+    with _lock(user):
+        state = suggestions(user)
         state["error"] = None
-        _write_json(SUGGESTIONS, state)
+        _write_json(_suggestions(user), state)

@@ -9,13 +9,13 @@
 </style>
 
 {% if skill_missing %}
-<div class="notice error">No <code>skill.md</code> found in the project root. Drafting will fail until you add one: <a href="/style">generate it from your past posts</a> or copy your own (see <code>skill.example.md</code>).</div>
+<div class="notice error">You don't have a style file yet, so drafting will fail. <a href="/style">Generate it from your past posts</a> or write your own.</div>
 {% endif %}
 {% if suggestion_count %}
 <div class="notice">Claude has {{ suggestion_count }} new style suggestion{{ "s" if suggestion_count != 1 }} from your edits. <a href="/style#suggestions">Review them</a>.</div>
 {% endif %}
 {% if not repo %}
-<div class="notice">GITHUB_REPO is not set in <code>.env</code>. You can draft and review, but approving won't open a PR yet.</div>
+<div class="notice">No GitHub repo set. You can draft and review, but approving won't open a PR until you add one on the <a href="/account">Account</a> page.</div>
 {% endif %}
 
 <div class="grid">

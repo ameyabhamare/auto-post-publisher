@@ -70,7 +70,7 @@
       <form method="post" action="/style/generate">
         <p class="muted small">
           Claude reads {{ published.count }} published post{{ "s" if published.count != 1 }}
-          {%- if hand_picked %}, {{ hand_picked | length }} from <code>examples/</code>{% endif %}
+          {%- if hand_picked %}, {{ hand_picked | length }} from <code>{{ examples_path }}</code>{% endif %}
           and anything you paste below, then proposes a style file for you to edit before saving.
         </p>
         <label for="pasted">More past posts <span class="muted">(optional; paste posts written elsewhere)</span></label>
@@ -83,13 +83,13 @@
   <section class="panel">
     <h2>Example posts used for drafting</h2>
     {% if drafting_examples %}
-    <ul class="plain">{% for name in drafting_examples %}<li><code>{{ name }}</code>{% if name in hand_picked %} <span class="muted small">(examples/)</span>{% endif %}</li>{% endfor %}</ul>
+    <ul class="plain">{% for name in drafting_examples %}<li><code>{{ name }}</code>{% if name in hand_picked %} <span class="muted small">(hand-picked)</span>{% endif %}</li>{% endfor %}</ul>
     {% else %}
-    <p class="muted">None yet. Publish a post or add files to <code>examples/</code>.</p>
+    <p class="muted">None yet. Publish a post or add files to <code>{{ examples_path }}</code>.</p>
     {% endif %}
     <p class="muted small">
-      Hand-picked posts in <code>examples/</code> come first; your most recent posts in
-      {% if repo %}<code>{{ repo }}</code>{% else %}your posts repo{% endif %} fill the rest.
+      Hand-picked posts in <code>{{ examples_path }}</code> come first; your most recent posts in
+      {% if repo %}<code>{{ repo }}</code>{% else %}your posts repo (set it on <a href="/account">Account</a>){% endif %} fill the rest.
       {% if published.checked %}Last checked {{ published.checked[:16].replace("T", " ") }} UTC.{% endif %}
     </p>
     {% if published.error %}<div class="notice error small">Couldn't reach GitHub: {{ published.error }}</div>{% endif %}

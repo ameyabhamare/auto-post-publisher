@@ -1,4 +1,4 @@
-"""File-backed storage: one folder per post under data/posts/<id>/.
+"""File-backed storage: one folder per post under users/<name>/data/posts/<id>/.
 
     meta.json      status, title, slug, tags, summary, pr_url, timestamps
     messages.json  the full Claude conversation (append-only)
@@ -15,7 +15,8 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
-from .config import DATA_DIR, MAX_IMAGE_EDGE
+from .config import MAX_IMAGE_EDGE
+from .users import User
 
 # Statuses: drafting -> in_review -> pr_open  (or failed)
 SUPPORTED_FORMATS = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp", "GIF": "image/gif"}
@@ -29,15 +30,15 @@ def slugify(text: str, fallback: str = "post") -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60].strip("-") or fallback
 
 
-def post_dir(post_id: str) -> Path:
+def post_dir(user: User, post_id: str) -> Path:
     if not re.fullmatch(r"[a-f0-9]{12}", post_id):
         raise ValueError("bad post id")
-    return DATA_DIR / post_id
+    return user.posts_data_dir / post_id
 
 
-def create_post(content: str, uploads: list[tuple[str, bytes]]) -> str:
+def create_post(user: User, content: str, uploads: list[tuple[str, bytes]]) -> str:
     post_id = uuid.uuid4().hex[:12]
-    d = post_dir(post_id)
+    d = post_dir(user, post_id)
     (d / "images").mkdir(parents=True)
     (d / "content.txt").write_text(content, encoding="utf-8")
 
@@ -46,7 +47,7 @@ def create_post(content: str, uploads: list[tuple[str, bytes]]) -> str:
         name = _save_image(d / "images", original_name, raw, used)
         used.add(name)
 
-    save_meta(post_id, {"id": post_id, "status": "drafting", "created": _now(), "updated": _now()})
+    save_meta(user, post_id, {"id": post_id, "status": "drafting", "created": _now(), "updated": _now()})
     return post_id
 
 
@@ -67,61 +68,61 @@ def _save_image(folder: Path, original_name: str, raw: bytes, used: set[str]) ->
     return name
 
 
-def list_images(post_id: str) -> list[Path]:
-    return sorted((post_dir(post_id) / "images").iterdir())
+def list_images(user: User, post_id: str) -> list[Path]:
+    return sorted((post_dir(user, post_id) / "images").iterdir())
 
 
 def media_type(path: Path) -> str:
     return {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif"}[path.suffix[1:]]
 
 
-def load_meta(post_id: str) -> dict:
-    return json.loads((post_dir(post_id) / "meta.json").read_text(encoding="utf-8"))
+def load_meta(user: User, post_id: str) -> dict:
+    return json.loads((post_dir(user, post_id) / "meta.json").read_text(encoding="utf-8"))
 
 
-def save_meta(post_id: str, meta: dict) -> None:
+def save_meta(user: User, post_id: str, meta: dict) -> None:
     meta["updated"] = _now()
-    (post_dir(post_id) / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    (post_dir(user, post_id) / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
 
-def update_meta(post_id: str, **fields) -> dict:
-    meta = load_meta(post_id)
+def update_meta(user: User, post_id: str, **fields) -> dict:
+    meta = load_meta(user, post_id)
     meta.update(fields)
-    save_meta(post_id, meta)
+    save_meta(user, post_id, meta)
     return meta
 
 
-def load_messages(post_id: str) -> list:
-    p = post_dir(post_id) / "messages.json"
+def load_messages(user: User, post_id: str) -> list:
+    p = post_dir(user, post_id) / "messages.json"
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
 
 
-def save_messages(post_id: str, messages: list) -> None:
-    (post_dir(post_id) / "messages.json").write_text(json.dumps(messages), encoding="utf-8")
+def save_messages(user: User, post_id: str, messages: list) -> None:
+    (post_dir(user, post_id) / "messages.json").write_text(json.dumps(messages), encoding="utf-8")
 
 
-def load_markdown(post_id: str) -> str:
-    p = post_dir(post_id) / "post.md"
+def load_markdown(user: User, post_id: str) -> str:
+    p = post_dir(user, post_id) / "post.md"
     return p.read_text(encoding="utf-8") if p.exists() else ""
 
 
-def save_markdown(post_id: str, text: str, generated: bool = False) -> None:
+def save_markdown(user: User, post_id: str, text: str, generated: bool = False) -> None:
     """Save the current draft. generated=True also records it as Claude's latest version,
     which is how human edits are detected later."""
     text = text.replace("\r\n", "\n")
-    (post_dir(post_id) / "post.md").write_text(text, encoding="utf-8")
+    (post_dir(user, post_id) / "post.md").write_text(text, encoding="utf-8")
     if generated:
-        (post_dir(post_id) / "generated.md").write_text(text, encoding="utf-8")
+        (post_dir(user, post_id) / "generated.md").write_text(text, encoding="utf-8")
 
 
-def has_human_edits(post_id: str) -> bool:
-    p = post_dir(post_id) / "generated.md"
+def has_human_edits(user: User, post_id: str) -> bool:
+    p = post_dir(user, post_id) / "generated.md"
     generated = p.read_text(encoding="utf-8") if p.exists() else ""
-    return load_markdown(post_id).strip() != generated.strip()
+    return load_markdown(user, post_id).strip() != generated.strip()
 
 
-def list_posts() -> list[dict]:
-    if not DATA_DIR.exists():
+def list_posts(user: User) -> list[dict]:
+    if not user.posts_data_dir.exists():
         return []
-    metas = [json.loads(p.read_text(encoding="utf-8")) for p in DATA_DIR.glob("*/meta.json")]
+    metas = [json.loads(p.read_text(encoding="utf-8")) for p in user.posts_data_dir.glob("*/meta.json")]
     return sorted(metas, key=lambda m: m["created"], reverse=True)
