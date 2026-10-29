@@ -1,104 +1,191 @@
 # Auto Post Publisher
 
-A web app that turns your notes and photos into a blog post written in your voice,
-lets you review and revise it, and then opens a pull request on GitHub with the post and images.
-Several people can share one install: each signs in and has their own style, examples, drafts
-and (optionally) their own posts repo.
+Turn rough notes and photos into a finished blog post written in your voice. Review it, ask for
+changes, and approve it. The app then opens a pull request on GitHub, and merging that PR
+publishes the post.
 
 ```
-content + images ─▶ Claude drafts (using skill.md) ─▶ you review ─┬─ revise ─▶ Claude redrafts
-                                                                  └─ approve ─▶ PR on GitHub ─▶ you merge
+notes + photos ─▶ Claude drafts in your style ─▶ you review ─┬─ revise ─▶ Claude redrafts
+                                                             └─ approve ─▶ PR on GitHub ─▶ merge = published
 ```
 
-## Setup
+## Features
 
-### 1. Install
+- **Drafts in your voice.** Claude follows your style file (`skill.md`) and a few of your real
+  posts as examples. It keeps your facts and opinions and doesn't invent new ones.
+- **Review loop.** Edit the Markdown directly, see a live preview, or give feedback and get a new
+  version. Claude builds on your hand edits instead of overwriting them.
+- **Publishes through pull requests.** Each approved post becomes one commit with its images on a
+  new branch, plus a PR. Nothing goes live until you merge.
+- **Learns your style over time:**
+  - Your most recent published posts are used as examples automatically.
+  - It can generate a style file from your past posts.
+  - After each post, it suggests new style rules based on what you changed. Nothing is added
+    until you accept it.
+- **Several people on one install.** Each person signs in and has their own style, examples and
+  drafts. They can share one posts repo or use their own.
+
+## Quick start
+
+You need Python 3.10+, a Claude API key, and a GitHub repo for your posts.
 
 ```powershell
+git clone https://github.com/ameyabhamare/auto-post-publisher.git
+cd auto-post-publisher
 python -m venv .venv
-.venv\Scripts\activate
+.venv\Scripts\activate            # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
+copy .env.example .env            # macOS/Linux: cp .env.example .env
 ```
 
-### 2. Create the posts repo on GitHub
+Fill in `.env` (see [Configuration](#configuration)), then create your account and start the app:
 
-1. Go to <https://github.com/new>, name it (e.g. `posts`), and **tick "Add a README file"**.
-   A pull request needs a branch with at least one commit.
+```powershell
+python -m app.users add yourname --display "Your Name"
+uvicorn app.main:app --reload
+```
+
+Open <http://127.0.0.1:8000>, sign in, and go to **Style** to set up your style file.
+
+## Setup in detail
+
+### 1. Posts repo and token
+
+1. Create a repo for your posts at <https://github.com/new> and **tick "Add a README file"**
+   (a pull request needs a branch with at least one commit). This can be the app's own repo,
+   as it is here.
 2. Create a **fine-grained personal access token** at
    <https://github.com/settings/personal-access-tokens/new>:
    - Repository access: **Only select repositories** → your posts repo
    - Permissions: **Contents: Read and write**, **Pull requests: Read and write**
 
-A team can share one repo (set it in `.env`), or each person can use their own (set on their
-**Account** page).
+Put the repo and token in `.env` to make them the default for everyone, or let each person set
+their own on their **Account** page.
 
-### 3. Configure
+### 2. Accounts
 
-Copy `.env.example` to `.env` and fill in `ANTHROPIC_API_KEY`, plus `GITHUB_TOKEN` and
-`GITHUB_REPO` (`username/posts`) for the shared default repo. Set `SECRET_KEY` to a long random
-string, and `SECURE_COOKIES=true` if the app is served over HTTPS.
-
-### 4. Create accounts
+Accounts are created on the machine running the app:
 
 ```powershell
-python -m app.users add alice --display "Alice Example"
+python -m app.users add alice --display "Alice Example"   # asks for a password
+python -m app.users list
+python -m app.users passwd alice
+python -m app.users remove alice
 ```
 
-You'll be asked for a password. Other commands: `passwd NAME`, `list`, `remove NAME`.
+- People sharing the default repo each publish into their own folder, `posts/<name>/`, so their
+  posts and examples never mix.
+- To point someone at their own repo, pass `--repo owner/name` and optionally `--posts-dir`.
+  They can also change this later on their Account page.
 
-- Users on the shared `.env` repo publish into their own folder, `posts/<name>/`, so their posts
-  and examples never mix. Pass `--repo owner/name` (and optionally `--posts-dir`) to point
-  someone at their own repo instead; they can also change it later on the Account page.
-- **Upgrading from the single-user version?** Add yourself with `--import-existing`. That moves
-  `skill.md`, `examples/` and `data/` into `users/<name>/`, and you keep publishing to `posts/`.
+### 3. Your style
 
-### 5. Run
+Open **Style** and either:
+
+- **Generate a style file.** Claude reads your published posts, your hand-picked examples and
+  anything you paste in, then proposes a `skill.md` for you to edit before saving.
+- **Or write your own** in the editor there. [`skill.example.md`](skill.example.md) shows what
+  it can contain.
+
+To always use particular posts as examples, put them in `users/<name>/examples/` as `.md`
+files. They come before your recent published posts.
+
+### 4. Sharing it with others
+
+By default the app only listens on your own computer. To let others on your network use it, run
+`uvicorn app.main:app --host 0.0.0.0`. Before exposing it to the internet, serve it over HTTPS
+and set `SECRET_KEY` and `SECURE_COOKIES=true` in `.env`.
+
+## Using the app
+
+| Page | What you do there |
+| --- | --- |
+| **Home** | Paste notes or a rough draft, add photos, and start a draft. See all your posts and their status. |
+| **Post** | Edit the Markdown, preview it, ask for a revision, save, or approve. Approving opens the PR. |
+| **Style** | Edit your style file, generate one from past posts, review suggested rules, see which example posts are in use. |
+| **Account** | Set your display name, author name, posts repo, folder, branch and token. Change your password. |
+
+## Configuration
+
+Set these in `.env`. Only `ANTHROPIC_API_KEY` is required to draft. Publishing also needs a repo
+and token, either here or on each person's Account page.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | | Claude API key. Can be left unset after `ant auth login`. |
+| `SECRET_KEY` | generated | Signs login cookies. If unset, one is created in `users/.secret_key`. |
+| `SECURE_COOKIES` | `false` | Send the login cookie over HTTPS only. Turn on behind TLS. |
+| `GITHUB_TOKEN` | | Default token for people who haven't set their own. |
+| `GITHUB_REPO` | | Default posts repo, `owner/name`. |
+| `GITHUB_BASE_BRANCH` | `main` | Branch that PRs target. |
+| `POSTS_DIR_IN_REPO` | `posts` | Folder in the repo for posts. |
+| `AUTHOR_NAME` | | Author name for people who haven't set one. |
+| `CLAUDE_MODEL` | `claude-opus-5-5` | Model used for drafting and style work. |
+| `CLAUDE_EFFORT` | `medium` | How hard Claude thinks: `low` to `max`. |
+| `EXAMPLE_COUNT` | `3` | Example posts sent with each draft. |
+| `STYLE_SOURCE_COUNT` | `10` | Published posts read when generating a style file. |
+
+## Upgrading from the single-user version
+
+Earlier versions kept `skill.md`, `examples/` and `data/` in the project root and had no sign-in.
+After pulling the latest code, run:
 
 ```powershell
-uvicorn app.main:app --reload
+pip install -r requirements.txt
+python -m app.users add yourname --display "Your Name" --import-existing
 ```
 
-Open <http://127.0.0.1:8000> and sign in. To let others on your network reach it, add
-`--host 0.0.0.0`; put it behind HTTPS before exposing it to the internet.
-
-### 6. Add your style
-
-Open **Style**, then either:
-
-- **Generate it.** Claude reads your published posts (plus your hand-picked examples and anything
-  you paste in) and proposes a style file you edit before saving.
-- **Or write your own** in the editor there. `skill.example.md` shows what it can contain.
-
-Your most recent published posts are sent as examples automatically. To pin specific posts
-instead, put them in `users/<name>/examples/` as `.md` files; they always come first.
+`--import-existing` moves those files into `users/yourname/`, and you keep publishing to the same
+`posts/` folder.
 
 ## How it works
 
-- **Accounts** (`app/users.py`): each user is a folder, `users/<name>/`, holding `user.json`
-  (settings, a scrypt password hash, and their GitHub token if they set one), `skill.md`,
-  `examples/` and `data/`. Sign-in uses a signed session cookie; changing a password signs out
-  that user's other sessions. Every page and file is scoped to the signed-in user.
-- **Drafting** (`app/drafter.py`): one Claude request with your `skill.md` and examples in a
-  cached system prompt, the images attached, and a JSON schema for the output (title, slug,
-  summary, tags, body). Revisions append your feedback to the same conversation, and if you edited
-  the draft by hand Claude is shown your version and builds on it.
-- **Review** (`app/main.py`): edit the markdown, see a rendered preview, ask for revisions,
-  or approve.
-- **Publishing** (`app/publisher.py`): approving creates one commit on a new branch
-  `post/<user>/<slug>-<id>` containing `<posts folder>/<date>-<slug>/post.md` plus its images,
-  and opens a PR.
-  Merging the PR publishes the post.
-
-- **Style** (`app/style.py`, the *Style* page):
-  - *Examples*: every draft gets up to `EXAMPLE_COUNT` example posts, hand-picked `examples/` first,
-    then your newest posts from your posts folder. Published posts are cached in `data/style/` and
-    re-checked on GitHub at most every 10 minutes, so the prompt cache keeps hitting.
-  - *Generate*: one Claude request reads up to `STYLE_SOURCE_COUNT` past posts and proposes a full
-    `skill.md`, keeping rules you already wrote unless your posts contradict them.
-  - *Learn from edits*: after you approve a post, Claude compares its first draft and your revision
-    feedback with what you shipped and suggests up to three new rules. Nothing changes until you
-    accept a suggestion; you can reword it first. Saving over `skill.md` keeps the old one as
+- **Drafting** (`app/drafter.py`): one Claude request, with your style file and example posts in
+  a cached system prompt, your photos attached, and a JSON schema for the output (title, slug,
+  summary, tags, body). Each revision is added to the same conversation, so earlier context is
+  reused instead of resent.
+- **Publishing** (`app/publisher.py`): approving creates a single commit on a new branch,
+  `post/<name>/<slug>-<id>`, containing `<posts folder>/<date>-<slug>/post.md` and its images,
+  then opens a PR. A post is never half-published.
+- **Style** (`app/style.py`):
+  - Published posts are copied locally and checked on GitHub for changes at most every 10
+    minutes, which keeps the prompt identical between drafts so caching keeps working.
+  - Generating a style file is one request over your past posts. Rules you already wrote are
+    kept unless your posts contradict them.
+  - After you approve a post, Claude compares its first draft and your feedback with what you
+    published and suggests up to three rules. Saving over `skill.md` keeps the old version as
     `skill.md.bak`.
+- **Accounts** (`app/users.py`, `app/main.py`): sign-in uses a signed session cookie, and every
+  page, post and image is limited to the signed-in person. Changing a password signs out that
+  person's other sessions.
 
-All user data is stored locally in `users/` (git-ignored). `user.json` can contain a GitHub
-token, so keep that folder private and back it up like any other secret.
+```
+app/
+  main.py        web routes, sign-in, account settings
+  drafter.py     drafting and revising posts
+  style.py       examples, style file generation, learning from edits
+  publisher.py   commits and pull requests on GitHub
+  users.py       accounts and the `python -m app.users` command
+  store.py       drafts on disk
+  llm.py         the shared Claude request
+  templates/     HTML pages
+users/<name>/    each person's user.json, skill.md, examples/ and data/ (not committed)
+posts/           published posts (in this repo, the author's own blog)
+```
+
+## Security notes
+
+- `users/<name>/user.json` holds a password hash and, if set, a GitHub token in plain text. The
+  `users/` folder is git-ignored. On macOS and Linux the file is readable only by the account
+  running the app; on Windows it relies on your user folder's permissions. Keep it private and
+  back it up like any other secret.
+- Use fine-grained tokens limited to the posts repo.
+- There's no limit on login attempts beyond the deliberately slow password hashing. Keep the
+  app on a trusted network, or behind HTTPS and a reverse proxy, if others can reach it.
+
+## Published posts
+
+Posts published with this app live in [`posts/`](posts/):
+
+- [What Is an n8n Workflow? A Quick Tour of the Building Blocks](posts/2026-10-29-what-is-an-n8n-workflow/post.md)
+- [From Prompt Engineering to Context Engineering](posts/2026-10-07-prompt-engineering-to-context-engineering/post.md)
