@@ -1,5 +1,7 @@
 .env
 .venv/
 data/
+users/
 __pycache__/
 skill.md
+skill.md.bak

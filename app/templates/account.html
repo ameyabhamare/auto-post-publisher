@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+{% block content %}
+<style>
+  .stack { display: grid; gap: 20px; max-width: 640px; }
+  .small { font-size: 13px; }
+  .check { display: flex; gap: 6px; align-items: center; font-weight: 400; }
+</style>
+
+<h1>Account <span class="muted" style="font-weight:400">· {{ user.name }}</span></h1>
+{% if message %}<div class="notice" style="border-left-color: var(--ok)">{{ message }}</div>{% endif %}
+{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+
+<div class="stack">
+  <form class="panel" method="post" action="/account" autocomplete="off">
+    <h2>Profile</h2>
+    <label for="display_name">Display name</label>
+    <input id="display_name" type="text" name="display_name" value="{{ user.display_name }}">
+    <label for="author_name">Author name on posts <span class="muted">(defaults to display name)</span></label>
+    <input id="author_name" type="text" name="author_name" value="{{ user.author_name }}" placeholder="{{ user.author }}">
+
+    <h2 style="margin-top:22px">Publishing</h2>
+    <p class="muted small">Leave a field blank to use the app's default{% if user.repo and not user.github_repo %} (currently <code>{{ user.repo }}</code>){% endif %}.</p>
+    <label for="github_repo">Posts repo</label>
+    <input id="github_repo" type="text" name="github_repo" value="{{ user.github_repo }}" placeholder="owner/posts">
+    <label for="posts_dir">Folder in the repo</label>
+    <input id="posts_dir" type="text" name="posts_dir" value="{{ user.posts_dir }}" placeholder="{{ user.repo_posts_dir }}">
+    <label for="github_base_branch">Base branch</label>
+    <input id="github_base_branch" type="text" name="github_base_branch" value="{{ user.github_base_branch }}" placeholder="{{ user.base_branch }}">
+    <label for="github_token">GitHub token</label>
+    <input id="github_token" type="password" name="github_token" autocomplete="new-password"
+           placeholder="{{ 'Saved; leave blank to keep it' if user.github_token else ('Using the app default' if user.token else 'Fine-grained token for your posts repo') }}">
+    {% if user.github_token %}<label class="check"><input type="checkbox" name="clear_token" value="true"> Remove my saved token</label>{% endif %}
+    <p class="muted small">Needs Contents and Pull requests (read &amp; write) on your posts repo only.</p>
+    <div class="row"><button class="primary">Save</button></div>
+  </form>
+
+  <form class="panel" method="post" action="/account/password">
+    <h2>Change password</h2>
+    <label for="current">Current password</label>
+    <input id="current" type="password" name="current" autocomplete="current-password" required>
+    <label for="new">New password</label>
+    <input id="new" type="password" name="new" autocomplete="new-password" minlength="8" required>
+    <label for="repeat">Repeat new password</label>
+    <input id="repeat" type="password" name="repeat" autocomplete="new-password" minlength="8" required>
+    <div class="row"><button>Change password</button></div>
+    <p class="muted small">This signs you out everywhere else.</p>
+  </form>
+</div>
+{% endblock %}

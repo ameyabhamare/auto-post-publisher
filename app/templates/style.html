@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Style{% endblock %}
+{% block head %}
+{% if proposal.status == "generating" %}<meta http-equiv="refresh" content="4">{% endif %}
+{% endblock %}
+{% block content %}
+<style>
+  .stack { display: grid; gap: 20px; }
+  .suggestion { padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .suggestion:last-child { border-bottom: 0; }
+  .suggestion input[type=text] { margin-top: 6px; }
+  .small { font-size: 13px; }
+  ul.plain { margin: 6px 0 0; padding-left: 18px; }
+</style>
+
+<h1>Your writing style</h1>
+<p class="muted">Claude drafts every post from your style file plus a few example posts. Both get better as you publish.</p>
+
+<div class="stack">
+
+  <section class="panel" id="suggestions">
+    <h2>Suggestions from your edits</h2>
+    {% if suggestions.error %}
+    <form class="notice error" method="post" action="/style/suggestions-error/dismiss">
+      {{ suggestions.error }} <button class="small" style="padding:2px 8px; margin-left:8px">Dismiss</button>
+    </form>
+    {% endif %}
+    {% if suggestions["items"] %}
+      {% for s in suggestions["items"] %}
+      <form class="suggestion" method="post" action="/style/suggestions/{{ s.id }}">
+        <span class="badge">{{ s.section }}</span>
+        <span class="muted small">from <a href="/posts/{{ s.post_id }}">{{ s.post_title or "a post" }}</a></span>
+        <input type="text" name="rule" value="{{ s.rule }}" aria-label="Rule">
+        <div class="muted small" style="margin-top:4px">{{ s.evidence }}</div>
+        <div class="row">
+          <button class="primary" name="action" value="accept">Add to style file</button>
+          <button name="action" value="dismiss">Dismiss</button>
+        </div>
+      </form>
+      {% endfor %}
+    {% else %}
+    <p class="muted">None right now. When you approve a post you edited or revised, Claude compares its first draft with what you shipped and suggests rules here.</p>
+    {% endif %}
+  </section>
+
+  <form class="panel" method="post" action="/style/skill">
+    <h2>Style file <span class="muted" style="font-weight:400">· {{ skill_path }}</span></h2>
+    {% if not skill %}<p class="notice error">You don't have a style file yet. Generate one below, or write it here.</p>{% endif %}
+    <textarea class="mono" name="skill" rows="20" required>{{ skill }}</textarea>
+    <div class="row"><button class="primary">Save style file</button></div>
+    <p class="muted small">Saving keeps your previous version as {{ skill_path }}.bak.</p>
+  </form>
+
+  <section class="panel">
+    <h2>Generate from your past posts</h2>
+    {% if proposal.status == "generating" %}
+      <p>Claude is reading your posts and writing a style file… this page refreshes on its own.</p>
+    {% elif proposal.status == "ready" %}
+      <p class="muted small">Proposal built from: {{ proposal.sources | join(", ") }}.{% if skill %} Your current rules were kept unless the posts contradicted them.{% endif %}</p>
+      {% if proposal.notes %}<div class="notice"><strong>Notes from Claude:</strong> {{ proposal.notes }}</div>{% endif %}
+      <form method="post" action="/style/proposal/accept">
+        <textarea class="mono" name="skill" rows="22">{{ proposal.skill_markdown }}</textarea>
+        <div class="row">
+          <button class="primary" onclick="return confirm('Replace your style file with this version?')">Use as my style file</button>
+          <button formaction="/style/proposal/discard">Discard</button>
+        </div>
+      </form>
+    {% else %}
+      {% if proposal.status == "failed" %}<div class="notice error">{{ proposal.error }}</div>{% endif %}
+      <form method="post" action="/style/generate">
+        <p class="muted small">
+          Claude reads {{ published.count }} published post{{ "s" if published.count != 1 }}
+          {%- if hand_picked %}, {{ hand_picked | length }} from <code>{{ examples_path }}</code>{% endif %}
+          and anything you paste below, then proposes a style file for you to edit before saving.
+        </p>
+        <label for="pasted">More past posts <span class="muted">(optional; paste posts written elsewhere)</span></label>
+        <textarea id="pasted" name="pasted" rows="8" placeholder="Paste one or more posts, separated by a line with ---"></textarea>
+        <div class="row"><button class="primary">Generate style file</button></div>
+      </form>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Example posts used for drafting</h2>
+    {% if drafting_examples %}
+    <ul class="plain">{% for name in drafting_examples %}<li><code>{{ name }}</code>{% if name in hand_picked %} <span class="muted small">(hand-picked)</span>{% endif %}</li>{% endfor %}</ul>
+    {% else %}
+    <p class="muted">None yet. Publish a post or add files to <code>{{ examples_path }}</code>.</p>
+    {% endif %}
+    <p class="muted small">
+      Hand-picked posts in <code>{{ examples_path }}</code> come first; your most recent posts in
+      {% if repo %}<code>{{ repo }}</code>{% else %}your posts repo (set it on <a href="/account">Account</a>){% endif %} fill the rest.
+      {% if published.checked %}Last checked {{ published.checked[:16].replace("T", " ") }} UTC.{% endif %}
+    </p>
+    {% if published.error %}<div class="notice error small">Couldn't reach GitHub: {{ published.error }}</div>{% endif %}
+    <form method="post" action="/style/refresh"><button>Check GitHub for new posts</button></form>
+  </section>
+
+</div>
+{% endblock %}

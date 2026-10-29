@@ -10,27 +10,30 @@ from datetime import date
 from github import Auth, Github, GithubException, InputGitTreeElement
 
 from . import store
-from .config import GITHUB_BASE_BRANCH, GITHUB_REPO, GITHUB_TOKEN, POSTS_DIR_IN_REPO
+from .users import User
 
 
 class PublishError(Exception):
     pass
 
 
-def open_pull_request(post_id: str) -> str:
-    if not GITHUB_TOKEN or not GITHUB_REPO:
-        raise PublishError("Set GITHUB_TOKEN and GITHUB_REPO in .env before publishing.")
+def get_repo(user: User):
+    if not user.token or not user.repo:
+        raise PublishError("Set a GitHub repo and token on the Account page before publishing.")
+    return Github(auth=Auth.Token(user.token)).get_repo(user.repo)
 
-    meta = store.load_meta(post_id)
-    folder = f"{POSTS_DIR_IN_REPO}/{date.today().isoformat()}-{meta['slug']}"
-    branch = f"post/{meta['slug']}-{post_id[:6]}"
 
-    files: list[tuple[str, bytes]] = [(f"{folder}/post.md", store.load_markdown(post_id).encode("utf-8"))]
-    files += [(f"{folder}/{img.name}", img.read_bytes()) for img in store.list_images(post_id)]
+def open_pull_request(user: User, post_id: str) -> str:
+    meta = store.load_meta(user, post_id)
+    folder = f"{user.repo_posts_dir}/{date.today().isoformat()}-{meta['slug']}"
+    branch = f"post/{user.name}/{meta['slug']}-{post_id[:6]}"
+
+    files: list[tuple[str, bytes]] = [(f"{folder}/post.md", store.load_markdown(user, post_id).encode("utf-8"))]
+    files += [(f"{folder}/{img.name}", img.read_bytes()) for img in store.list_images(user, post_id)]
 
     try:
-        repo = Github(auth=Auth.Token(GITHUB_TOKEN)).get_repo(GITHUB_REPO)
-        base_sha = repo.get_branch(GITHUB_BASE_BRANCH).commit.sha
+        repo = get_repo(user)
+        base_sha = repo.get_branch(user.base_branch).commit.sha
         base_commit = repo.get_git_commit(base_sha)
 
         tree_items = []
@@ -46,11 +49,11 @@ def open_pull_request(post_id: str) -> str:
             title=f"New post: {meta['title']}",
             body=f"{meta.get('summary', '')}\n\nPreview: [`{folder}/post.md`]({repo.html_url}/blob/{branch}/{folder}/post.md)",
             head=branch,
-            base=GITHUB_BASE_BRANCH,
+            base=user.base_branch,
         )
     except GithubException as e:
         message = e.data.get("message") if isinstance(e.data, dict) else str(e)
         raise PublishError(f"GitHub error {e.status}: {message}") from e
 
-    store.update_meta(post_id, status="pr_open", pr_url=pr.html_url, branch=branch, error=None)
+    store.update_meta(user, post_id, status="pr_open", pr_url=pr.html_url, branch=branch, error=None)
     return pr.html_url

@@ -11,12 +11,8 @@ import base64
 import json
 from datetime import date
 
-import anthropic
-
-from . import store
-from .config import AUTHOR_NAME, EFFORT, EXAMPLES_DIR, MODEL, SKILL_PATH
-
-client = anthropic.Anthropic()
+from . import llm, store, style
+from .users import User
 
 INSTRUCTIONS = """You ghostwrite blog posts for one specific author. The author's skill file \
 below describes their voice, tone, structure, and habits; follow it closely. If example \
@@ -55,31 +51,29 @@ POST_SCHEMA = {
 }
 
 
-class DraftError(Exception):
+class DraftError(llm.ClaudeError):
     pass
 
 
-def _system_blocks() -> list[dict]:
-    if not SKILL_PATH.exists():
-        raise DraftError(f"Style file not found: {SKILL_PATH}. Copy your skill.md into the project root.")
+def _system_blocks(user: User) -> list[dict]:
+    if not user.skill_path.exists():
+        raise DraftError("You don't have a style file yet. Create one on the Style page.")
     blocks = [
         {"type": "text", "text": INSTRUCTIONS},
-        {"type": "text", "text": f"<skill_file>\n{SKILL_PATH.read_text(encoding='utf-8')}\n</skill_file>"},
+        {"type": "text", "text": f"<skill_file>\n{user.skill_path.read_text(encoding='utf-8')}\n</skill_file>"},
     ]
-    examples = sorted(EXAMPLES_DIR.glob("*.md")) if EXAMPLES_DIR.exists() else []
+    examples = style.example_posts(user)
     if examples:
-        joined = "\n\n".join(
-            f'<example_post file="{p.name}">\n{p.read_text(encoding="utf-8")}\n</example_post>' for p in examples
-        )
+        joined = "\n\n".join(f'<example_post file="{name}">\n{text}\n</example_post>' for name, text in examples)
         blocks.append({"type": "text", "text": f"<example_posts>\n{joined}\n</example_posts>"})
     # Skill file and examples are identical on every request; cache everything up to here.
     blocks[-1]["cache_control"] = {"type": "ephemeral"}
     return blocks
 
 
-def _initial_user_turn(post_id: str) -> dict:
+def _initial_user_turn(user: User, post_id: str) -> dict:
     content: list[dict] = []
-    images = store.list_images(post_id)
+    images = store.list_images(user, post_id)
     for img in images:
         content.append({"type": "text", "text": f"Image file: {img.name}"})
         content.append({
@@ -90,53 +84,25 @@ def _initial_user_turn(post_id: str) -> dict:
                 "data": base64.standard_b64encode(img.read_bytes()).decode("ascii"),
             },
         })
-    raw = (store.post_dir(post_id) / "content.txt").read_text(encoding="utf-8")
+    raw = (store.post_dir(user, post_id) / "content.txt").read_text(encoding="utf-8")
     content.append({"type": "text", "text": f"<raw_content>\n{raw}\n</raw_content>\n\nWrite the post."})
     return {"role": "user", "content": content}
 
 
-def _call(messages: list[dict]) -> tuple[dict, dict]:
+def _call(user: User, messages: list[dict]) -> tuple[dict, dict]:
     """Run one request. Returns (parsed post JSON, assistant message to store)."""
-    try:
-        response = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=16000,
-            system=_system_blocks(),
-            messages=messages,
-            thinking={"type": "adaptive"},
-            output_config={
-                "effort": EFFORT,
-                "format": {"type": "json_schema", "schema": POST_SCHEMA},
-            },
-            # If a safety classifier declines, re-run on Anthropic's recommended fallback model.
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-        )
-    except anthropic.APIStatusError as e:
-        raise DraftError(f"Claude API error {e.status_code}: {e.message}") from e
-    except anthropic.APIConnectionError as e:
-        raise DraftError("Could not reach the Claude API. Check your connection.") from e
-
-    if response.stop_reason == "refusal":
-        raise DraftError("Claude declined to write this post.")
-    if response.stop_reason == "max_tokens":
-        raise DraftError("The draft was cut off (max_tokens). Try shorter input or raise max_tokens.")
-
-    text = next((b.text for b in response.content if b.type == "text"), None)
-    if text is None:
-        raise DraftError("Claude returned no text.")
-    assistant_turn = {"role": "assistant", "content": response.to_dict()["content"]}
-    return json.loads(text), assistant_turn
+    post, content = llm.call_json(_system_blocks(user), messages, POST_SCHEMA)
+    return post, {"role": "assistant", "content": content}
 
 
-def _frontmatter(post: dict) -> str:
+def _frontmatter(user: User, post: dict) -> str:
     lines = [
         "---",
         f"title: {json.dumps(post['title'], ensure_ascii=False)}",
         f"date: {date.today().isoformat()}",
     ]
-    if AUTHOR_NAME:
-        lines.append(f"author: {json.dumps(AUTHOR_NAME, ensure_ascii=False)}")
+    if user.author:
+        lines.append(f"author: {json.dumps(user.author, ensure_ascii=False)}")
     lines += [
         f"summary: {json.dumps(post['summary'], ensure_ascii=False)}",
         f"tags: {json.dumps(post['tags'], ensure_ascii=False)}",
@@ -145,11 +111,12 @@ def _frontmatter(post: dict) -> str:
     return "\n".join(lines)
 
 
-def _apply(post_id: str, post: dict, messages: list[dict]) -> None:
-    markdown = f"{_frontmatter(post)}\n\n# {post['title']}\n\n{post['body_markdown'].strip()}\n"
-    store.save_messages(post_id, messages)
-    store.save_markdown(post_id, markdown, generated=True)
+def _apply(user: User, post_id: str, post: dict, messages: list[dict]) -> None:
+    markdown = f"{_frontmatter(user, post)}\n\n# {post['title']}\n\n{post['body_markdown'].strip()}\n"
+    store.save_messages(user, post_id, messages)
+    store.save_markdown(user, post_id, markdown, generated=True)
     store.update_meta(
+        user,
         post_id,
         status="in_review",
         title=post["title"],
@@ -161,19 +128,19 @@ def _apply(post_id: str, post: dict, messages: list[dict]) -> None:
     )
 
 
-def draft(post_id: str) -> None:
-    messages = [_initial_user_turn(post_id)]
-    post, assistant_turn = _call(messages)
-    _apply(post_id, post, messages + [assistant_turn])
+def draft(user: User, post_id: str) -> None:
+    messages = [_initial_user_turn(user, post_id)]
+    post, assistant_turn = _call(user, messages)
+    _apply(user, post_id, post, messages + [assistant_turn])
 
 
-def revise(post_id: str, feedback: str, edited_markdown: str | None) -> None:
-    messages = store.load_messages(post_id)
+def revise(user: User, post_id: str, feedback: str, edited_markdown: str | None) -> None:
+    messages = store.load_messages(user, post_id)
     parts = []
     if edited_markdown is not None:
         parts.append(f"I edited the draft. This is the current version:\n<edited_post>\n{edited_markdown}\n</edited_post>")
     parts.append(f"<feedback>\n{feedback}\n</feedback>" if feedback.strip() else "Tidy this up and return the full post.")
     messages.append({"role": "user", "content": "\n\n".join(parts)})
 
-    post, assistant_turn = _call(messages)
-    _apply(post_id, post, messages + [assistant_turn])
+    post, assistant_turn = _call(user, messages)
+    _apply(user, post_id, post, messages + [assistant_turn])
