@@ -20,9 +20,16 @@ pip install -r requirements.txt
 
 ### 2. Add your style
 
-- Copy your `skill.md` into the project root. `skill.example.md` shows what it can contain.
-- Optional but strongly recommended: put 2–3 of your past posts in `examples/` as `.md` files.
-  Examples teach the voice better than any description.
+Either:
+
+- **Generate it.** Once the app is running, open **Style** and click *Generate style file*. Claude
+  reads your published posts (plus anything in `examples/` or pasted in) and proposes a `skill.md`
+  you edit before saving.
+- **Or bring your own.** Copy your `skill.md` into the project root. `skill.example.md` shows what
+  it can contain.
+
+Your most recent published posts are sent as examples automatically. To pin specific posts
+instead, put them in `examples/` as `.md` files; they always come first.
 
 ### 3. Create the posts repo on GitHub
 
@@ -57,4 +64,15 @@ Open <http://127.0.0.1:8000>.
   `post/<slug>-<id>` containing `posts/<date>-<slug>/post.md` plus its images, and opens a PR.
   Merging the PR publishes the post.
 
-Drafts are stored locally in `data/posts/<id>/` (git-ignored).
+- **Style** (`app/style.py`, the *Style* page):
+  - *Examples*: every draft gets up to `EXAMPLE_COUNT` example posts, hand-picked `examples/` first,
+    then your newest posts from `GITHUB_REPO`. Published posts are cached in `data/style/` and
+    re-checked on GitHub at most every 10 minutes, so the prompt cache keeps hitting.
+  - *Generate*: one Claude request reads up to `STYLE_SOURCE_COUNT` past posts and proposes a full
+    `skill.md`, keeping rules you already wrote unless your posts contradict them.
+  - *Learn from edits*: after you approve a post, Claude compares its first draft and your revision
+    feedback with what you shipped and suggests up to three new rules. Nothing changes until you
+    accept a suggestion; you can reword it first. Saving over `skill.md` keeps the old one as
+    `skill.md.bak`.
+
+Drafts and style data are stored locally in `data/` (git-ignored).

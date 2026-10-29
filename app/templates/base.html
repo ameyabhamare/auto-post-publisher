@@ -22,13 +22,15 @@
     body { margin: 0; background: var(--bg); color: var(--text);
            font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
     header { padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--panel); }
+    header { display: flex; gap: 20px; align-items: baseline; }
     header a { color: var(--text); text-decoration: none; font-weight: 600; }
+    header nav a { font-weight: 500; color: var(--muted); }
     main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; }
     h1 { font-size: 22px; margin: 0 0 16px; }
     h2 { font-size: 16px; margin: 0 0 12px; }
     .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
     label { display: block; font-weight: 600; margin: 12px 0 6px; }
-    textarea, input[type=file] { width: 100%; font: inherit; color: var(--text); background: var(--bg);
+    textarea, input[type=file], input[type=text] { width: 100%; font: inherit; color: var(--text); background: var(--bg);
            border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
     textarea.mono { font: 13px/1.5 ui-monospace, Consolas, monospace; }
     button { font: inherit; font-weight: 600; border-radius: 8px; padding: 9px 16px; cursor: pointer;
@@ -47,7 +49,7 @@
   </style>
 </head>
 <body>
-  <header><a href="/">Post Publisher</a></header>
+  <header><a href="/">Post Publisher</a><nav><a href="/style">Style</a></nav></header>
   <main>{% block content %}{% endblock %}</main>
 </body>
 </html>

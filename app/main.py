@@ -6,7 +6,7 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from . import drafter, publisher, store
+from . import drafter, publisher, store, style
 from .config import GITHUB_REPO, SKILL_PATH
 
 app = FastAPI(title="Auto Post Publisher")
@@ -46,6 +46,7 @@ def index(request: Request):
         "posts": store.list_posts(),
         "skill_missing": not SKILL_PATH.exists(),
         "repo": GITHUB_REPO,
+        "suggestion_count": len(style.suggestions()["items"]),
     })
 
 
@@ -113,11 +114,81 @@ def retry(post_id: str, background: BackgroundTasks):
 
 
 @app.post("/posts/{post_id}/approve")
-def approve(post_id: str, markdown: str = Form(...)):
+def approve(post_id: str, background: BackgroundTasks, markdown: str = Form(...)):
     _require_status(_meta_or_404(post_id), "in_review")
     store.save_markdown(post_id, markdown)
     try:
         publisher.open_pull_request(post_id)
     except publisher.PublishError as e:
         store.update_meta(post_id, error=str(e))
+    else:
+        # Compare Claude's first draft with what shipped and propose skill.md rules.
+        background.add_task(style.learn_from_post, post_id)
     return _redirect(post_id)
+
+
+# ---------------------------------------------------------------- style
+
+
+def _style_redirect() -> RedirectResponse:
+    return RedirectResponse("/style", status_code=303)
+
+
+@app.get("/style", response_class=HTMLResponse)
+def style_page(request: Request):
+    examples = style.local_examples()
+    return templates.TemplateResponse(request, "style.html", {
+        "skill": style.read_skill(),
+        "skill_path": SKILL_PATH.name,
+        "proposal": style.proposal(),
+        "suggestions": style.suggestions(),
+        "hand_picked": [name for name, _ in examples],
+        "drafting_examples": [name for name, _ in style.example_posts()],
+        "published": style.published_status(),
+        "repo": GITHUB_REPO,
+    })
+
+
+@app.post("/style/skill")
+def style_save(skill: str = Form(...)):
+    style.save_skill(skill)
+    return _style_redirect()
+
+
+@app.post("/style/generate")
+def style_generate(background: BackgroundTasks, pasted: str = Form("")):
+    if style.proposal().get("status") != "generating":
+        style.start_proposal()
+        background.add_task(style.generate_proposal, pasted)
+    return _style_redirect()
+
+
+@app.post("/style/proposal/accept")
+def style_proposal_accept(skill: str = Form(...)):
+    style.save_skill(skill)
+    style.discard_proposal()
+    return _style_redirect()
+
+
+@app.post("/style/proposal/discard")
+def style_proposal_discard():
+    style.discard_proposal()
+    return _style_redirect()
+
+
+@app.post("/style/suggestions/{suggestion_id}")
+def style_suggestion(suggestion_id: str, action: str = Form(...), rule: str = Form("")):
+    style.resolve_suggestion(suggestion_id, accept=action == "accept", rule=rule)
+    return _style_redirect()
+
+
+@app.post("/style/suggestions-error/dismiss")
+def style_dismiss_error():
+    style.dismiss_error()
+    return _style_redirect()
+
+
+@app.post("/style/refresh")
+def style_refresh():
+    style.published_posts(0, force=True)
+    return _style_redirect()

@@ -17,10 +17,13 @@ class PublishError(Exception):
     pass
 
 
-def open_pull_request(post_id: str) -> str:
+def get_repo():
     if not GITHUB_TOKEN or not GITHUB_REPO:
         raise PublishError("Set GITHUB_TOKEN and GITHUB_REPO in .env before publishing.")
+    return Github(auth=Auth.Token(GITHUB_TOKEN)).get_repo(GITHUB_REPO)
 
+
+def open_pull_request(post_id: str) -> str:
     meta = store.load_meta(post_id)
     folder = f"{POSTS_DIR_IN_REPO}/{date.today().isoformat()}-{meta['slug']}"
     branch = f"post/{meta['slug']}-{post_id[:6]}"
@@ -29,7 +32,7 @@ def open_pull_request(post_id: str) -> str:
     files += [(f"{folder}/{img.name}", img.read_bytes()) for img in store.list_images(post_id)]
 
     try:
-        repo = Github(auth=Auth.Token(GITHUB_TOKEN)).get_repo(GITHUB_REPO)
+        repo = get_repo()
         base_sha = repo.get_branch(GITHUB_BASE_BRANCH).commit.sha
         base_commit = repo.get_git_commit(base_sha)
 

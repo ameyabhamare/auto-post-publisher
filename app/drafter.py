@@ -11,12 +11,8 @@ import base64
 import json
 from datetime import date
 
-import anthropic
-
-from . import store
-from .config import AUTHOR_NAME, EFFORT, EXAMPLES_DIR, MODEL, SKILL_PATH
-
-client = anthropic.Anthropic()
+from . import llm, store, style
+from .config import AUTHOR_NAME, SKILL_PATH
 
 INSTRUCTIONS = """You ghostwrite blog posts for one specific author. The author's skill file \
 below describes their voice, tone, structure, and habits; follow it closely. If example \
@@ -55,22 +51,20 @@ POST_SCHEMA = {
 }
 
 
-class DraftError(Exception):
+class DraftError(llm.ClaudeError):
     pass
 
 
 def _system_blocks() -> list[dict]:
     if not SKILL_PATH.exists():
-        raise DraftError(f"Style file not found: {SKILL_PATH}. Copy your skill.md into the project root.")
+        raise DraftError(f"Style file not found: {SKILL_PATH}. Create one on the Style page or copy your skill.md into the project root.")
     blocks = [
         {"type": "text", "text": INSTRUCTIONS},
         {"type": "text", "text": f"<skill_file>\n{SKILL_PATH.read_text(encoding='utf-8')}\n</skill_file>"},
     ]
-    examples = sorted(EXAMPLES_DIR.glob("*.md")) if EXAMPLES_DIR.exists() else []
+    examples = style.example_posts()
     if examples:
-        joined = "\n\n".join(
-            f'<example_post file="{p.name}">\n{p.read_text(encoding="utf-8")}\n</example_post>' for p in examples
-        )
+        joined = "\n\n".join(f'<example_post file="{name}">\n{text}\n</example_post>' for name, text in examples)
         blocks.append({"type": "text", "text": f"<example_posts>\n{joined}\n</example_posts>"})
     # Skill file and examples are identical on every request; cache everything up to here.
     blocks[-1]["cache_control"] = {"type": "ephemeral"}
@@ -97,36 +91,8 @@ def _initial_user_turn(post_id: str) -> dict:
 
 def _call(messages: list[dict]) -> tuple[dict, dict]:
     """Run one request. Returns (parsed post JSON, assistant message to store)."""
-    try:
-        response = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=16000,
-            system=_system_blocks(),
-            messages=messages,
-            thinking={"type": "adaptive"},
-            output_config={
-                "effort": EFFORT,
-                "format": {"type": "json_schema", "schema": POST_SCHEMA},
-            },
-            # If a safety classifier declines, re-run on Anthropic's recommended fallback model.
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-        )
-    except anthropic.APIStatusError as e:
-        raise DraftError(f"Claude API error {e.status_code}: {e.message}") from e
-    except anthropic.APIConnectionError as e:
-        raise DraftError("Could not reach the Claude API. Check your connection.") from e
-
-    if response.stop_reason == "refusal":
-        raise DraftError("Claude declined to write this post.")
-    if response.stop_reason == "max_tokens":
-        raise DraftError("The draft was cut off (max_tokens). Try shorter input or raise max_tokens.")
-
-    text = next((b.text for b in response.content if b.type == "text"), None)
-    if text is None:
-        raise DraftError("Claude returned no text.")
-    assistant_turn = {"role": "assistant", "content": response.to_dict()["content"]}
-    return json.loads(text), assistant_turn
+    post, content = llm.call_json(_system_blocks(), messages, POST_SCHEMA)
+    return post, {"role": "assistant", "content": content}
 
 
 def _frontmatter(post: dict) -> str:

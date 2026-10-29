@@ -7,8 +7,14 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
 DATA_DIR = ROOT / "data" / "posts"
+STYLE_DIR = ROOT / "data" / "style"  # published-post cache, style proposals, suggestions
 SKILL_PATH = ROOT / os.getenv("SKILL_PATH", "skill.md")
 EXAMPLES_DIR = ROOT / os.getenv("EXAMPLES_DIR", "examples")
+# Example posts sent with every draft: hand-picked ones in EXAMPLES_DIR first, then the most
+# recent posts published to GITHUB_REPO fill the remaining slots.
+EXAMPLE_COUNT = int(os.getenv("EXAMPLE_COUNT", "3"))
+# How many published posts the style-file generator reads.
+STYLE_SOURCE_COUNT = int(os.getenv("STYLE_SOURCE_COUNT", "10"))
 
 MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-5-5")
 EFFORT = os.getenv("CLAUDE_EFFORT", "medium")
